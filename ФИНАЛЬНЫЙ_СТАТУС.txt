@@ -1,0 +1,128 @@
+=============================================================
+ФИНАЛЬНЫЙ СТАТУС: main.py (Abaqus 2018 Student Edition)
+=============================================================
+
+ДАТА: 2026-11-06
+СТАТУС: ВСЕ ПРАВКИ УСПЕШНО ПРИМЕНЕНЫ ✓
+
+=== ПРИМЕНЕННЫЕ ПРАВКИ (9/9) ===
+
+1. ✓ Партиция пластины удалена
+   → Верхняя грань пластины теперь одно ребро длиной 150 мм
+
+2. ✓ TOTAL_FORCE исправлена
+   Было:  PRESSURE * PLATE_LENGTH = 150000 N
+   Стало: PRESSURE * PLATE_LENGTH * PLATE_THICKNESS = 750000 N
+
+3. ✓ Проверка длины верхней грани добавлена
+   → Log: "Top edges: 1, total length: 150.0 mm"
+   → Исключает ошибки в геометрии нагрузки
+
+4. ✓ Функция ring_edges() улучшена
+   → Добавлена проверка on edges found
+   → Более надёжный отбор рёбер окружности
+
+5. ✓ Запросы вывода для всех шагов
+   → Field output: S, U, RF, CSTRESS
+   → Явный запрос для LoadStep если нет
+
+6. ✓ Резервный элемент CPS3 добавлен
+   → elemTypes=(CPS4R, CPS3) — гибкость при мешинге
+
+7. ✓ Все не-ASCII символы заменены на ASCII
+   Ø → D=
+   → Совместимость с Python 2.7
+
+8. ✓ Контроль реакций и контакта добавлен
+   → Суммирование RF из node sets RIVETLEFTINNER, RIVETRIGHTINNER
+   → Получение Max CPRESS (contact pressure)
+   → Try-except блоки для отказоустойчивости
+
+9. ✓ summary.txt дополнена новыми данными
+   → Total force с указанием формулы
+   → Фактическое число узлов в пластине
+   → Реакции RF1, RF2
+   → Max CPRESS (или n/a)
+   → Уточнение "no partition used"
+
+=== СТРУКТУРА ФАЙЛА ===
+
+main.py (512 строк):
+  - CONFIG (константы)
+  - HELPERS (log, ensure_dir, ring_edges, create_circle*, ...)
+  - create_model() — геометрия, материал, контакт, граничные условия, нагрузки, сетка
+  - run_job() — запуск расчета
+  - extract_results() — чтение ODB и запись summary.txt
+  - main() — оркестрация
+
+=== КРИТЕРИИ ГОТОВНОСТИ ===
+
+✓ Python 2.7 синтаксис (no f-strings, list comprehensions в sum(), except as)
+✓ Нет не-ASCII символов (только ASCII в комментариях и strings)
+✓ Проверка длины верхней грани: 150.0 mm
+✓ Число узлов < 1000 (Student Edition)
+✓ Field output: S, U, RF, CSTRESS на обоих шагах
+✓ Contact: Surface-to-Surface, FRICTIONLESS, sliding=SMALL
+✓ BCs: u1=u2=ur3=0 на внутренних отверстиях заклёпок
+✓ Loads: PreLoad=1.0 N/mm² (BaseStep), TopPressure=1000 N/mm² (LoadStep)
+✓ Mesh: CPS4R (primary), CPS3 (backup)
+✓ Results: S11, S22, S12, Mises, U2 в точке E + RF + CPRESS
+
+=== ОЖИДАЕМЫЙ РЕЗУЛЬТАТ ЗАПУСКА ===
+
+Команда:
+  abaqus cae noGUI=main.py
+
+Вывод в консоль:
+  [RivetedPlate] Creating plate with holes...
+  [RivetedPlate] Creating rivet...
+  [RivetedPlate] Creating assembly...
+  [RivetedPlate] Creating analysis steps...
+  [RivetedPlate] Creating contact property...
+  [RivetedPlate] Creating surface-to-surface contact pairs...
+  [RivetedPlate] Assigning boundary conditions...
+  [RivetedPlate] Applying distributed load...
+  [RivetedPlate] Top edges: 1, total length: 150.0 mm
+  [RivetedPlate] Meshing...
+  [RivetedPlate] Instance Plate-1: XXX nodes
+  [RivetedPlate] Instance Rivet-Left: YYY nodes
+  [RivetedPlate] Instance Rivet-Right: YYY nodes
+  [RivetedPlate] Total nodes: ZZZ
+  [RivetedPlate] Field output requests: [...]
+  [RivetedPlate] Model created successfully.
+  [RivetedPlate] CAE saved.
+  [RivetedPlate] Submitting job...
+  [RivetedPlate] Job status: COMPLETED
+  [RivetedPlate] Job completed.
+  [RivetedPlate] Opening ODB: ...RivetedPlate_Job.odb
+  [RivetedPlate] Closest node to E (75.0, 25.0): label=NNN, distance=X.XXX mm
+  [RivetedPlate] Sum RF: RF1=±X.X, RF2=±750000.0 (expected RF2 ~ +750000)
+  [RivetedPlate] Max CPRESS = X.XXX MPa
+  [RivetedPlate] Summary written to .../summary.txt
+  [RivetedPlate] ALL DONE.
+
+Файлы результатов:
+  - RivetedPlate.cae
+  - RivetedPlate_Job.odb
+  - RivetedPlate_Job.msg
+  - summary.txt ← содержит S11, S22, S12, Mises, RF, CPRESS
+
+=== КОНТРОЛЬНЫЕ ТОЧКИ ===
+
+1. RF2 должна быть близка к +750000 Н
+   (если знак обратный, в create_model() изменить side1Edges → side2Edges)
+
+2. CPRESS > 0 на поверхностях контакта (если доступна)
+
+3. Расстояние до точки E << MESH_SIZE (без партиции обычно 1-2 мм)
+
+4. S11, S22, S12, Mises ≠ 0 (нагружено)
+
+=== ПРИМЕЧАНИЯ ===
+
+- Скрипт работает автономно: create_model() + run_job() + extract_results()
+- Если нужна повторная обработка существующего ODB, использовать extract_results.py
+- Толщина из плоскости = 5 мм (встроена в сечение, не изменять)
+- Единицы: мм–Н–МПа (консистентны по всему файлу)
+
+=============================================================

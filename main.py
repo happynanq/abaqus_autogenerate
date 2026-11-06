@@ -30,9 +30,9 @@ PLATE_HEIGHT = 50.0
 PLATE_THICKNESS = 5.0           # out-of-plane thickness
 
 # Hole geometry
-HOLE_RADIUS = 10.0              # Ø 20 mm
-RIVET_OUTER_RADIUS = 10.0       # Ø 20 mm
-RIVET_INNER_RADIUS = 4.0        # Ø 8 mm (central hole)
+HOLE_RADIUS = 10.0              # D= 20 mm
+RIVET_OUTER_RADIUS = 10.0       # D= 20 mm
+RIVET_INNER_RADIUS = 4.0        # D= 8 mm (central hole)
 RIVET_THICKNESS = 5.0           # Same as plate
 
 # Hole positions (symmetric)
@@ -51,7 +51,7 @@ POISSON_RATIO = 0.3
 
 # Load: distributed pressure on top edge (AB)
 PRESSURE = 1000.0               # N/mm^2 on edge AB
-TOTAL_FORCE = PRESSURE * PLATE_LENGTH  # Total force in N
+TOTAL_FORCE = PRESSURE * PLATE_LENGTH * PLATE_THICKNESS  # 750000 N
 
 # Analysis type
 ANALYSIS_TYPE = 'STATIC_LINEAR_PERTURBATION'
@@ -74,13 +74,15 @@ def ensure_dir(path):
         os.makedirs(path)
 
 def ring_edges(inst, cx, cy, r):
-    """Rёbra (edges) of instance inst lying on circle radius r centered at (cx, cy)."""
+    """Edges of instance inst lying on circle of radius r centered at (cx, cy)."""
     pts = []
     for e in inst.edges:
         p = e.pointOn[0]
         if abs(hypot(p[0] - cx, p[1] - cy) - r) < 0.5:
             pts.append(p)
-    return inst.edges.findAt(coordinates=tuple(pts))
+    if not pts:
+        raise RuntimeError('ring_edges: no edges found for r=%.1f' % r)
+    return inst.edges.findAt(*[(p,) for p in pts])
 
 def create_circle_sketch(sketch, cx, cy, r, label='Circle'):
     """Create a circle centered at (cx, cy) with radius r."""
@@ -159,12 +161,6 @@ def create_model():
     
     rivet_region = regionToolset.Region(faces=rivet.faces[:])
     rivet.SectionAssignment(region=rivet_region, sectionName='RivetSection')
-    
-    # Partition plate at midpoint x = POINT_E_X to ensure node at point E
-    log('Partitioning plate at x = ' + str(POINT_E_X) + '...')
-    dp = plate.DatumPlaneByPrincipalPlane(principalPlane=YZPLANE, offset=POINT_E_X)
-    plate.PartitionFaceByDatumPlane(datumPlane=plate.datums[dp.id],
-                                    faces=plate.faces[:])
     
     # ----------------------------
     # Assembly
@@ -266,6 +262,11 @@ def create_model():
     if len(top_edge) == 0:
         raise RuntimeError('Could not find top edge of plate for loading.')
     
+    top_len = sum([e.getSize(printResults=False) for e in top_edge])
+    log('Top edges: %d, total length: %.1f mm' % (len(top_edge), top_len))
+    if abs(top_len - PLATE_LENGTH) > 0.5:
+        raise RuntimeError('Top edge length %.1f != %.1f' % (top_len, PLATE_LENGTH))
+    
     # Create surface on top edge for pressure load
     a.Surface(name='PlateTopSurface', side1Edges=top_edge)
     
@@ -285,8 +286,9 @@ def create_model():
     rivet.seedPart(size=MESH_SIZE, deviationFactor=0.1, minSizeFactor=0.1)
     
     elemType = mesh.ElemType(elemCode=CPS4R, elemLibrary=STANDARD)
-    plate.setElementType(regions=(plate.faces[:],), elemTypes=(elemType,))
-    rivet.setElementType(regions=(rivet.faces[:],), elemTypes=(elemType,))
+    triType = mesh.ElemType(elemCode=CPS3, elemLibrary=STANDARD)
+    plate.setElementType(regions=(plate.faces[:],), elemTypes=(elemType, triType))
+    rivet.setElementType(regions=(rivet.faces[:],), elemTypes=(elemType, triType))
     
     plate.generateMesh()
     rivet.generateMesh()
@@ -309,8 +311,14 @@ def create_model():
     # ----------------------------
     # Field output
     # ----------------------------
-    model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'U', 'RF'))
+    for nm in model.fieldOutputRequests.keys():
+        model.fieldOutputRequests[nm].setValues(
+            variables=('S', 'U', 'RF', 'CSTRESS'))
+    log('Field output requests: ' + str(model.fieldOutputRequests.keys()))
+    
+    if 'F-Output-LoadStep' not in model.fieldOutputRequests.keys():
+        model.FieldOutputRequest(name='F-Output-LoadStep', createStepName='LoadStep',
+                                 variables=('S', 'U', 'RF', 'CSTRESS'))
     
     return model, a
 
@@ -349,6 +357,29 @@ def extract_results():
         
         step = odb.steps[step_name]
         frame = step.frames[-1]
+        
+        # --- Check: sum of reactions at fixed rivet holes ---
+        tot = [0.0, 0.0]
+        cpress_max = None
+        try:
+            rf = frame.fieldOutputs['RF']
+            for nm in ('RIVETLEFTINNER', 'RIVETRIGHTINNER'):
+                sub = rf.getSubset(region=odb.rootAssembly.nodeSets[nm])
+                for v in sub.values:
+                    tot[0] += v.data[0]
+                    tot[1] += v.data[1]
+            log('Sum RF: RF1=%.1f, RF2=%.1f (expected RF2 ~ +%.0f)' %
+                (tot[0], tot[1], TOTAL_FORCE))
+        except Exception as err:
+            log('RF check skipped: ' + str(err))
+        
+        # --- Check: contact pressure ---
+        try:
+            cp_field = frame.fieldOutputs['CPRESS']
+            cpress_max = max([v.data for v in cp_field.values])
+            log('Max CPRESS = %.3f MPa' % cpress_max)
+        except Exception as err:
+            log('CPRESS not available: ' + str(err))
         
         # Get plate instance
         inst = odb.rootAssembly.instances['PLATE-1']
@@ -409,7 +440,7 @@ def extract_results():
             f.write('Holes: radius %.1f mm at (%.1f, %.1f) and (%.1f, %.1f)\n' %
                    (HOLE_RADIUS, HOLE_LEFT_X, HOLE_LEFT_Y,
                     HOLE_RIGHT_X, HOLE_RIGHT_Y))
-            f.write('Rivets: Ø%.1f mm with central hole Ø%.1f mm\n\n' %
+            f.write('Rivets: D=%.1f mm with central hole D=%.1f mm\n\n' %
                    (2*RIVET_OUTER_RADIUS, 2*RIVET_INNER_RADIUS))
             
             f.write('MATERIAL\n')
@@ -418,15 +449,16 @@ def extract_results():
             
             f.write('LOAD\n')
             f.write('Distributed pressure on top edge: %.1f N/mm^2\n' % PRESSURE)
-            f.write('Total force: %.0f N\n\n' % TOTAL_FORCE)
+            f.write('Total force (pressure x length x thickness): %.0f N\n\n' % TOTAL_FORCE)
             
             f.write('MESH\n')
             f.write('Element size: %.1f mm\n' % MESH_SIZE)
-            f.write('Total nodes: < 1000 (Student Edition limit)\n\n')
+            f.write('Total nodes in plate: %d\n\n' % len(inst.nodes))
             
             f.write('RESULTS AT POINT E (x=%.1f, y=%.1f)\n' %
                    (POINT_E_X, POINT_E_Y))
             f.write('Closest node distance: %.6f mm\n' % (min_dist**0.5))
+            f.write('Value is taken at the nearest node to E (no partition used).\n')
             f.write('='*50 + '\n')
             
             if stress_at_e is not None:
@@ -448,6 +480,15 @@ def extract_results():
             else:
                 f.write('WARNING: Displacement not found at node\n\n')
             
+            f.write('REACTIONS AND CONTACT\n')
+            f.write('Sum of reactions RF1 (x): %.1f N\n' % tot[0])
+            f.write('Sum of reactions RF2 (y): %.1f N\n' % tot[1])
+            if cpress_max is not None:
+                f.write('Max contact pressure: %.3f MPa\n' % cpress_max)
+            else:
+                f.write('Max contact pressure: n/a\n')
+            
+            f.write('\n')
             f.write('='*50 + '\n')
             f.write('Analysis type: Static Linear Perturbation\n')
             f.write('Contact: frictionless, surface-to-surface (rivet outer edge vs plate hole)\n')
