@@ -1,0 +1,20 @@
+# -*- coding: mbcs -*-
+from part import *
+from material import *
+from section import *
+from assembly import *
+from step import *
+from interaction import *
+from load import *
+from mesh import *
+from optimization import *
+from job import *
+from sketch import *
+from visualization import *
+from connectorBehavior import *
+del mdb.jobs['RivetedPlate_Job']
+mdb.Job(description='Riveted plate with distributed load', memory=90, 
+    memoryUnits=PERCENTAGE, model='RivetedPlate', multiprocessingMode=DEFAULT, 
+    name='RivetedPlate_Job', numCpus=1, numDomains=1, type=ANALYSIS)
+mdb.jobs['RivetedPlate_Job'].submit(consistencyChecking=OFF)
+mdb.jobs['RivetedPlate_Job'].waitForCompletion()

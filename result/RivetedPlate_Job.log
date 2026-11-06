@@ -1,0 +1,19 @@
+Analysis initiated from SIMULIA established products
+Abaqus JOB RivetedPlate_Job
+Abaqus Student Edition 2018
+Begin Analysis Input File Processor
+11/6/2026 9:29:40 AM
+Run pre.exe
+11/6/2026 9:29:42 AM
+End Analysis Input File Processor
+Begin Abaqus/Standard Analysis
+11/6/2026 9:29:42 AM
+Run standard.exe
+11/6/2026 9:29:45 AM
+End Abaqus/Standard Analysis
+Begin Convert MFS to SFS
+11/6/2026 9:29:46 AM
+Run SMASimUtility.exe
+11/6/2026 9:29:46 AM
+End Convert MFS to SFS
+Abaqus JOB RivetedPlate_Job COMPLETED
